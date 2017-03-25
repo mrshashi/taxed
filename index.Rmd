@@ -1,0 +1,220 @@
+---
+title: "2016 US-California Marriage Tax Penalty/Bonus"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    theme: default
+runtime: shiny
+---
+
+```{r global, include=FALSE}
+
+library(plotly)
+library(shiny)
+
+library(htmltools)
+attachDependencies(tagList(),
+  htmlDependency("google-analytics", version = "1.1.1",
+                 ".", script = "google-analytics.js", 
+                 all_files = FALSE)
+)
+
+source(file = 'tax_engine.R')
+# married.cost = read_feather('married.feather')
+marriage.cost = read_feather('marriage-cost.feather')
+f.status = list('Single' = 'Single', 
+                'Married' = 'Married', 
+                'Head of Household' = 'hoh')
+```
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+
+textInput('my.income', 'Your Total Family Income', value = '300000')
+radioButtons('married', 'Filing Status', f.status, selected = 'Married')
+sliderInput('children', 'Number of Children', min=0, max=3, value=1)
+sliderInput('income.ratio', 'High Income to Family Income Ratio', min=.50, max=1.00, value=0.6)
+
+renderText('Your Tax:')
+renderUI(tags$h3(prettyNum(round(get.just.tax()),big.mark=",")))
+
+
+conditionalPanel(
+  condition = "input.married == 'Married'",
+  renderText('Marriage Tax Penalty:'),
+  renderUI(
+    h3(
+      prettyNum(round(
+        marriage.or.divorce(
+          input$children,as.numeric(input$my.income),input$income.ratio
+          )),
+        big.mark = ",")
+      )
+    )
+)
+renderUI(a('Blog: Understanding Taxes', href = 'http://medium.com'))
+renderUI(a('Fork me on Github', href = 'http://github.com/mrshashi'))
+
+```
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Bonus or Penalty
+
+```{r}
+kids = reactive({
+  min(3, input$children)
+})
+
+renderPlotly({
+  marriage.cost %>%
+  filter(children == kids(),
+         income.2 < 301000) %>%
+  ggplot(aes(income.1, income.2, color = penalty.or.bonus, size = amount))+
+  geom_point(alpha=0.3)+
+  scale_color_brewer('',palette = 'Set2')+
+  scale_size('',range = c(0,6))+
+  scale_x_continuous('Your Income', labels = comma)+
+  scale_y_continuous('Spouse Income', labels = comma)+
+    labs(title = 'Marriage Tax Penalty (or Bonus)')
+})
+
+```
+
+
+### 2016 Taxes
+
+```{r}
+data = reactive({
+  get.data(input$married, 
+           input$children, 
+           input$income.ratio
+           )
+})
+
+get.my.tax = reactive({
+  my.inc = as.numeric(input$my.income)
+  extract.tax(input$married, input$children, 
+              input$income.ratio, my.inc, 
+              min.income = my.inc, steps = 1, 
+              all = TRUE )
+})
+
+get.just.tax = reactive({
+  my.inc = as.numeric(input$my.income)
+  extract.tax(input$married, input$children, 
+              input$income.ratio, my.inc, 
+              min.income = my.inc, steps = 1 )
+})
+
+renderPlotly({
+ggplot(data(), aes(income))+
+  geom_line(aes(y = total.tax, color = 'total tax'), alpha=0.9)+
+  geom_line(aes(y = carry.home, color = 'carry home'), alpha=0.9)+
+  
+  scale_color_brewer("Where's Money?",  palette = 'Set2')+
+  scale_y_continuous('Carry Home Income / Tax Paid', labels=comma)+
+  scale_x_continuous('Income', labels=comma)
+})
+```
+
+### Taxes & Credits
+
+```{r}
+renderPlotly({
+ggplot(data(), aes(income))+
+  geom_line(aes(y = social.security, color = 'social security'))+
+  geom_line(aes(y = medicare, color = 'medicare'))+
+  geom_line(aes(y = state.tax, color = 'state tax'))+
+  geom_line(aes(y = federal.tax, color = 'federal tax'))+
+  geom_line(aes(y = eic, color = 'earned income credit'))+
+  geom_line(aes(y = child.tax.credit, color = 'child tax credit'))+
+  geom_line(aes(y = amt.tax, color = 'AMT tax'))+
+  scale_color_brewer('Where did the taxes go?',  palette = 'Set1')+
+  scale_y_continuous('Tax',labels=comma)+
+  scale_x_continuous('Income', labels=comma)
+})
+```
+
+### Taxable Income
+
+```{r}
+renderPlotly({
+ggplot(data(), aes(income))+
+  geom_line(aes(y = amt.income, color = 'amt taxable'))+
+  geom_line(aes(y = federal.taxable, color = 'federal taxable'))+
+  geom_line(aes(y = state.taxable, color = 'state taxable'))+
+  scale_color_brewer('Where did the taxes go?',  type = 'qual')+
+  scale_y_continuous('Taxable Income',labels=comma)+
+  scale_x_continuous('Income',labels=comma)
+})
+```
+
+
+### Tax Percentage
+
+```{r}
+renderPlotly({
+  ggplot(data(), aes(income))+
+    geom_line(aes(y = total.tax.percent, color = 'total tax'))+
+    geom_line(aes(y = state.percent, color = 'state tax'))+
+    geom_line(aes(y = federal.percent, color = 'federal tax'))+
+    geom_line(aes(y = amt.percent, color = 'amt tax'))+
+    geom_line(aes(y = medicare.percent, color = 'medicare tax'))+
+    geom_line(aes(y = social.security.percent, color = 'social security tax'))+
+    scale_y_continuous('Total-Tax as % of Income')+
+    scale_x_continuous('Income', labels = comma)
+})
+```
+
+### Federal Exemptions
+
+```{r}
+renderPlotly({
+ggplot(data(), aes(income))+
+  geom_step(aes(y=ded.f.personal, color = 'federal personal exemption'),
+            alpha=0.7,
+            direction = 'hv')+
+  geom_line(aes(y=ded.f.itemized, color = 'final federal exemption'))+
+  # geom_line(aes(y=ded.f.itemized.20, color = 'federal exemption 20'))+
+  geom_line(aes(y=ded.f.standard, color = 'federal standard exemption'))+
+  geom_line(aes(y=state.tax, color = 'state tax'))+
+  geom_line(aes(y=amt.exempt, color = 'amt exempt'))+
+  scale_color_brewer('Exemptions',palette = 'Set2')+
+  ggtitle('Exemptions')+
+  scale_y_continuous('$',labels=comma)+
+  scale_x_continuous('Income',labels=comma)
+})
+```
+
+### State Exemptions
+
+```{r}
+renderPlotly({
+ggplot(data(), aes(income))+
+  geom_step(aes(y=credit.s.personal, color = 'state personal exemption'))+
+  geom_step(aes(y=ded.s.standard, color = 'state standard exemption'))+
+  scale_color_brewer('Exemption',palette = 'Set2')+
+  ggtitle('Exemptions')+
+  scale_y_continuous('$',labels=comma)+
+  scale_x_continuous('Income',labels=comma)
+})
+```
+
+### Detailed Tax
+
+```{r}
+renderTable(get.my.tax())
+```
+
+### Data
+
+```{r}
+renderTable(data())
+```
+
+
+
