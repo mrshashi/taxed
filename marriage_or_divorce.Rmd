@@ -1,0 +1,221 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, message=FALSE, warning=TRUE}
+library(tidyverse)
+library(scales)
+library(feather)
+library(plotly)
+
+eic = read_csv('eic.csv')
+write_feather(eic, 'eic.feather')
+
+source('tax_engine.R')
+```
+
+```{r}
+
+filing.status = list('Single','Married','hoh')
+govs = list('fed', 'CA')
+
+get.frame <- function(rates) {
+  df = data_frame()
+  for (status in filing.status){
+    df = df %>% 
+      bind_rows(data_frame(f.status = status,
+                rate = rates[[status]]$rate, 
+                thresh = rates[[status]]$thresh))
+  }
+  #append a row with high threshold to plot the rate out beyond last thresh
+  df = df %>% 
+    group_by(f.status) %>% 
+    summarise(rate= max(rate), thresh = 1e6) %>% 
+    bind_rows(df)
+  
+  return(df)
+}
+
+df.fed = get.frame(fed.rates)
+df.ca = get.frame(ca.rates)
+
+ggplot(df.fed)+
+  geom_step(aes(thresh, rate, color = f.status),direction = 'hv', size = 2, alpha =0.5)+
+  ggtitle('Federal Income Tax Rates')+
+  scale_x_continuous('income', labels = comma)+
+  scale_y_continuous('tax rate',labels = percent_format())+
+  scale_color_hue('filing status')
+ggsave('federal.png')
+
+ggplot(df.ca)+
+  geom_step(aes(thresh, rate, color = f.status),direction = 'hv', size = 2, alpha =0.5)+
+  ggtitle('CA Income Tax Rates')+
+  scale_x_continuous('income', labels = comma)+
+  scale_y_continuous('tax rate',labels = percent_format())+
+  scale_color_hue('filing status')
+ggsave('calironia.png')
+```
+
+```{r social and medicare}
+
+incs = c(0,118500,2e5,2.5e5,5e5)
+
+social = tibble(income = incs,
+              `filing status` = 'any',
+              `tax rate` = c(0.062,0,0,0,0),
+              type = 'social')
+medicare.single = tibble(income = incs,
+                  `filing status` = 'single or hoh',
+                  `tax rate` = c(0.0145,0.0145,0.0235,0.0235,0.0235),
+                  type = 'medicare')
+medicare.married = medicare.single %>% 
+  mutate(`filing status` = 'married',
+         `tax rate` = ifelse(income == 2.0e5, 0.0145, `tax rate`))
+
+fica = bind_rows(social, medicare.married, medicare.single) %>% 
+  mutate(class = paste(type, `filing status`))
+
+ggplot(fica, aes(income, `tax rate`, color = class))+
+  geom_step(alpha=0.5, size=2)+
+  scale_x_continuous(labels = comma)+
+  scale_y_continuous(labels = percent_format())+
+  ggtitle('Medicare & Social Rates')
+
+ggsave('medicare_rates.png')
+```
+
+
+```{r}
+stats = data_frame()
+
+for (dep in 0:2){
+  for (f.status in list('Single', 'hoh')){
+    stats = stats %>% bind_rows(
+      get.data(f.status,dep,income.ratio = 0.5,m.income=1e6,steps = 10001) %>% 
+        mutate(filing.status = f.status, children = dep)
+    )
+  }
+}
+
+# for (dep in 0:3){
+#   for (ir in seq(0.5, 1, 0.02)){
+#     stats = stats %>% bind_rows(
+#       get.data('Married',dep,income.ratio = ir, m.income=1e6,steps = 51) %>% 
+#         mutate(filing.status = 'Married', children = dep, income.ratio = ir)
+#     )
+#   }
+# }
+
+stats %>% 
+  filter(filing.status %in% c('Single', 'hoh'),
+         income < 300000) %>% 
+  mutate(status = paste(filing.status, children)) %>% 
+  ggplot(aes(income, 
+             total.tax.percent,
+             color = status))+
+  geom_line()
+```
+
+
+```{r}
+
+dependents = 0:3
+incs = seq(0, 200000, 1e4)
+incs = append(incs, seq(220000,6e5,2e4))
+marriage.cost = crossing(income.1 = incs, income.2 = incs, children = dependents) %>% 
+  mutate(cost = 0, 
+         income = income.1 + income.2, 
+         income.ratio = income.1/income,
+         income.ratio = ifelse(is.nan(income.ratio),1,income.ratio)) %>% 
+  filter(income.1 >= income.2)
+for (row in 1:nrow(marriage.cost)){
+  dep = as.numeric(marriage.cost[row,'children'])
+  income= as.numeric(marriage.cost[row, 'income'])
+  income.ratio = as.numeric(marriage.cost[row,'income.ratio'])
+  marriage.cost[row,'cost'] = marriage.or.divorce(dep, income, income.ratio)
+}
+m2 = marriage.cost %>% filter(income.1> income.2) %>% 
+  mutate(i3 = income.1,
+         income.1 = income.2,
+         income.2 = i3) %>% 
+  select(-i3)
+marriage.cost = bind_rows(marriage.cost, m2)
+marriage.cost = marriage.cost %>% 
+  mutate(percent.cost = cost/income,
+         penalty.or.bonus = ifelse(cost>0, 'Penalty', 'Bonus'),
+         amount = abs(cost))
+write_feather(marriage.cost, 'marriage-cost.feather')
+```
+
+```{r}
+p = marriage.cost %>% 
+  filter(children==1, income.2<301000) %>% 
+  ggplot(aes(y = income.2, x = income.1, 
+             color = penalty.or.bonus, size= amount))+
+  geom_point(alpha=0.5)+
+  scale_color_brewer('',palette = 'Set2')+
+  scale_x_continuous(labels=comma)+
+  scale_y_continuous(labels=comma)+
+  scale_size(range = c(0,5))
+
+ggplotly(p)
+```
+
+
+```{r}
+# #this is neither easy to read, nor fast - so don't use this way of doing it.
+# 
+# # merge with single and hoh to get each partner's total tax
+# s2 = stats %>% 
+#   select(income, total.tax, children, filing.status)
+# single = s2 %>% 
+#   filter(filing.status == 'Single',
+#          children == 0) %>% 
+#   rename(single.tax = total.tax) %>%
+#   select(-c(filing.status, children))
+# hoh = s2 %>% 
+#   filter(filing.status == 'hoh') %>% 
+#   rename(hoh.tax = total.tax) %>% 
+#   select(-filing.status)
+# married = stats %>% 
+#   filter(filing.status == 'Married') %>% 
+#   mutate(inc.high = round(income*income.ratio/100)*100,
+#          inc.low = income - inc.high) %>% 
+#   left_join(single, by = c('inc.low' = 'income')) %>% 
+#   rename(single.tax.low = single.tax) %>% 
+#   left_join(single, by = c('inc.high' = 'income')) %>% 
+#   rename(single.tax.high = single.tax) %>% 
+#   left_join(hoh, by = c('inc.high' = 'income', 'children' = 'children')) %>% 
+#   rename(hoh.tax.high = hoh.tax) %>% 
+#   left_join(hoh, by = c('inc.low' = 'income', 'children' = 'children')) %>% 
+#   rename(hoh.tax.low = hoh.tax) %>% 
+#   mutate(divorce.tax = pmin(hoh.tax.high + single.tax.low, 
+#                             hoh.tax.low + single.tax.high),
+#          divorce.tax = ifelse(children == 0, 
+#                               single.tax.low + single.tax.high, 
+#                               divorce.tax),
+#          tax.penalty = total.tax - divorce.tax,
+#          penalty = ifelse(tax.penalty>0, 'Penalty', 'Bonus'),
+#          penalty.amount = abs(tax.penalty))
+# write_feather(married, 'married.feather')
+
+```
+
+```{r}
+# married %>% 
+#   filter(children == 1) %>% 
+#   ggplot(aes(income,tax.penalty, color = factor(income.ratio)))+
+#   geom_line()
+# 
+# married %>% 
+#   filter(children == 1) %>% 
+#   ggplot(aes(income, income.ratio, color = penalty, size = penalty.amount))+
+#   geom_point(alpha=0.3)
+
+# married %>% 
+#   filter(children ==1) %>% 
+#   ggplot(aes(inc.high, inc.low, color = penalty, size = penalty.amount))+
+#   geom_point(alpha=0.3)
+
+```
