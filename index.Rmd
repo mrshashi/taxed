@@ -55,7 +55,7 @@ conditionalPanel(
     )
 )
 renderUI(a('Blog: Understanding Taxes', href = 'http://medium.com'))
-renderUI(a('Fork me on Github', href = 'http://github.com/mrshashi'))
+renderUI(a('Fork me on Github', href = 'https://github.com/mrshashi/taxed'))
 
 ```
 
