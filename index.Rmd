@@ -34,10 +34,12 @@ Inputs {.sidebar}
 ```{r}
 
 radioButtons('married', 'Filing Status', f.status, selected = 'Married')
-sliderInput('my.income', 'Your Income',min = 0, max = 600000, value = 150000)
+sliderInput('my.income', 'Your Income',min = 0, max = 600000, 
+            value = 150000, step = 2000)
 conditionalPanel(
   condition = "input.married == 'Married'",
-  sliderInput('spouse.income', 'Partner Income', min = 0, max = 600000, value = 120000)
+  sliderInput('spouse.income', 'Partner Income', min = 0, 
+              max = 600000, value = 120000, step = 2000)
 )
 sliderInput('children', 'Number of Children', min=0, max=3, value=1)
 
