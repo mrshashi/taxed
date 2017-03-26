@@ -13,17 +13,18 @@ library(plotly)
 library(shiny)
 
 library(htmltools)
-attachDependencies(tagList(),
-  htmlDependency("google-analytics", version = "1.1.1",
-                 ".", script = "google-analytics.js", 
-                 all_files = FALSE)
-)
-
+if (file.exists('google-analytics.js')){
+  attachDependencies(tagList(),
+      htmlDependency("google-analytics", version = "1.1.1",
+                     ".", script = "google-analytics.js", 
+                     all_files = FALSE)
+  )
+}
 source(file = 'tax_engine.R')
-# married.cost = read_feather('married.feather')
+
 marriage.cost = read_feather('marriage-cost.feather')
-f.status = list('Single' = 'Single', 
-                'Married' = 'Married', 
+f.status = list('Married' = 'Married', 
+                'Single' = 'Single', 
                 'Head of Household' = 'hoh')
 ```
 
@@ -32,10 +33,14 @@ Inputs {.sidebar}
 
 ```{r}
 
-textInput('my.income', 'Your Total Family Income', value = '300000')
 radioButtons('married', 'Filing Status', f.status, selected = 'Married')
+sliderInput('my.income', 'Your Income',min = 0, max = 600000, value = 150000)
+conditionalPanel(
+  condition = "input.married == 'Married'",
+  sliderInput('spouse.income', 'Partner Income', min = 0, max = 600000, value = 120000)
+)
 sliderInput('children', 'Number of Children', min=0, max=3, value=1)
-sliderInput('income.ratio', 'High Income to Family Income Ratio', min=.50, max=1.00, value=0.6)
+
 
 renderText('Your Tax:')
 renderUI(tags$h3(prettyNum(round(get.just.tax()),big.mark=",")))
@@ -48,7 +53,7 @@ conditionalPanel(
     h3(
       prettyNum(round(
         marriage.or.divorce(
-          input$children,as.numeric(input$my.income),input$income.ratio
+          kids(),family.income(),inc.ratio()
           )),
         big.mark = ",")
       )
@@ -65,6 +70,21 @@ Column {.tabset}
 ### Bonus or Penalty
 
 ```{r}
+
+inc.ratio = reactive({
+  if (input$married == 'Married'){
+    return(max(input$my.income, input$spouse.income)/(input$my.income + input$spouse.income))
+  }
+  return(1)
+})
+
+family.income = reactive({
+  if (input$married == 'Married'){
+    return(input$my.income + input$spouse.income)
+  }
+  return(input$my.income)
+})
+
 kids = reactive({
   min(3, input$children)
 })
@@ -74,7 +94,7 @@ renderPlotly({
   filter(children == kids(),
          income.2 < 301000) %>%
   ggplot(aes(income.1, income.2, color = penalty.or.bonus, size = amount))+
-  geom_point(alpha=0.3)+
+  geom_point(alpha=0.4)+
   scale_color_brewer('',palette = 'Set2')+
   scale_size('',range = c(0,6))+
   scale_x_continuous('Your Income', labels = comma)+
@@ -90,32 +110,32 @@ renderPlotly({
 ```{r}
 data = reactive({
   get.data(input$married, 
-           input$children, 
-           input$income.ratio
+           kids(),
+           inc.ratio()
            )
 })
 
 get.my.tax = reactive({
-  my.inc = as.numeric(input$my.income)
-  extract.tax(input$married, input$children, 
-              input$income.ratio, my.inc, 
+  my.inc = family.income()
+  extract.tax(input$married, kids(), 
+              inc.ratio(), my.inc, 
               min.income = my.inc, steps = 1, 
               all = TRUE )
 })
 
 get.just.tax = reactive({
-  my.inc = as.numeric(input$my.income)
-  extract.tax(input$married, input$children, 
-              input$income.ratio, my.inc, 
+  my.inc = family.income()
+  extract.tax(input$married, kids(),
+              inc.ratio(), my.inc, 
               min.income = my.inc, steps = 1 )
 })
 
 renderPlotly({
 ggplot(data(), aes(income))+
-  geom_line(aes(y = total.tax, color = 'total tax'), alpha=0.9)+
-  geom_line(aes(y = carry.home, color = 'carry home'), alpha=0.9)+
+  geom_line(aes(y = total.tax, color = 'total tax'), alpha=0.4, color = 'red')+
+  geom_line(aes(y = carry.home, color = 'carry home'), alpha=0.6, color = '#55CC77')+
   
-  scale_color_brewer("Where's Money?",  palette = 'Set2')+
+  scale_color_hue("Where's Money?")+
   scale_y_continuous('Carry Home Income / Tax Paid', labels=comma)+
   scale_x_continuous('Income', labels=comma)
 })
@@ -133,7 +153,7 @@ ggplot(data(), aes(income))+
   geom_line(aes(y = eic, color = 'earned income credit'))+
   geom_line(aes(y = child.tax.credit, color = 'child tax credit'))+
   geom_line(aes(y = amt.tax, color = 'AMT tax'))+
-  scale_color_brewer('Where did the taxes go?',  palette = 'Set1')+
+  scale_color_hue('Where did the taxes go?')+
   scale_y_continuous('Tax',labels=comma)+
   scale_x_continuous('Income', labels=comma)
 })
@@ -147,7 +167,7 @@ ggplot(data(), aes(income))+
   geom_line(aes(y = amt.income, color = 'amt taxable'))+
   geom_line(aes(y = federal.taxable, color = 'federal taxable'))+
   geom_line(aes(y = state.taxable, color = 'state taxable'))+
-  scale_color_brewer('Where did the taxes go?',  type = 'qual')+
+  scale_color_hue('Where did the taxes go?')+
   scale_y_continuous('Taxable Income',labels=comma)+
   scale_x_continuous('Income',labels=comma)
 })
@@ -183,7 +203,7 @@ ggplot(data(), aes(income))+
   geom_line(aes(y=ded.f.standard, color = 'federal standard exemption'))+
   geom_line(aes(y=state.tax, color = 'state tax'))+
   geom_line(aes(y=amt.exempt, color = 'amt exempt'))+
-  scale_color_brewer('Exemptions',palette = 'Set2')+
+  scale_color_hue('Exemptions')+
   ggtitle('Exemptions')+
   scale_y_continuous('$',labels=comma)+
   scale_x_continuous('Income',labels=comma)
@@ -197,7 +217,7 @@ renderPlotly({
 ggplot(data(), aes(income))+
   geom_step(aes(y=credit.s.personal, color = 'state personal exemption'))+
   geom_step(aes(y=ded.s.standard, color = 'state standard exemption'))+
-  scale_color_brewer('Exemption',palette = 'Set2')+
+  scale_color_hue('Exemption')+
   ggtitle('Exemptions')+
   scale_y_continuous('$',labels=comma)+
   scale_x_continuous('Income',labels=comma)
