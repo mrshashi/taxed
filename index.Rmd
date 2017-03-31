@@ -13,13 +13,13 @@ library(plotly)
 library(shiny)
 
 library(htmltools)
-# if (file.exists('google-analytics.js')){
+if (file.exists('google-analytics.js')){
   attachDependencies(tagList(),
       htmlDependency("google-analytics", version = "1.1.1",
                      ".", script = "google-analytics.js", 
                      all_files = FALSE)
   )
-# }
+}
 source(file = 'tax_engine.R')
 
 marriage.cost = read_feather('marriage-cost.feather')
